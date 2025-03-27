@@ -64,6 +64,12 @@ my $command_logger_fmt = "######################################################
     "COMMAND OUTPUT:\n\n%s\n" .
     "********************************************************************************\n";
 
+my $command_logger_fmt_begin = "################################################################################\n" .
+    "COMMAND:         %s\n" .
+    "RETURN CODE:     %d\n" .
+    "COMMAND OUTPUT:\n\n";
+my $command_logger_fmt_end = "\n********************************************************************************\n";
+
 my $command;
 my $command_output;
 my $dirname;
@@ -283,6 +289,16 @@ sub run_command {
     return ($command, $command_output, $rc);
 }
 
+sub run_command2 {
+    my ($command) = @_;
+
+    $command .= " 2>&1";
+    my @command_output = `. /etc/profile; $command`;
+    my $rc = $? >> 8;
+
+    return ($command, \@command_output, $rc);
+}
+
 sub filter_output {
     my ($output) = @_;
 
@@ -305,6 +321,67 @@ sub command_logger {
     my ($log_level, $command, $rc, $command_output) = @_;
 
     logger($log_level, sprintf($command_logger_fmt, $command, $rc, $command_output));
+}
+
+sub logger2 {
+    my ($log_level, $log_msg, $indents) = @_;
+    $indents //= 0;
+
+    if (!defined($log_msg)) {
+        $log_msg->[0] = 'log_msg not defined';
+    }
+
+    my $my_indent = "";
+    for (my $i=0; $i<$indents; $i++) {
+        $my_indent .= $indent;
+    }
+
+    my $log_it = 0;
+    my $prefix = "";
+
+    if (($log_level eq 'debug') &&
+        ($args{'log-level'} eq 'debug')) {
+        $log_it = 1;
+        $prefix = "[DEBUG] ";
+    } elsif (($log_level eq 'verbose') &&
+             (($args{'log-level'} eq 'debug') ||
+              ($args{'log-level'} eq 'verbose'))) {
+        $log_it = 1;
+        $prefix = "[VERBOSE] ";
+    } elsif (($log_level eq 'info') &&
+             (($args{'log-level'} eq 'debug') ||
+              ($args{'log-level'} eq 'verbose') ||
+              ($args{'log-level'} eq 'info'))) {
+        $log_it = 1;
+    } elsif ($log_level eq 'error') {
+        $log_it = 1;
+        $prefix = "[ERROR] ";
+    }
+
+    if (!$log_it) {
+        return;
+    }
+
+    if (scalar(@{ $log_msg }) == 0) {
+        print $prefix;
+        return;
+    }
+
+    my $add_newline = 0;
+    my $last_idx = scalar(@{ $log_msg }) - 1;
+    if ($log_msg->[$last_idx] =~ /\n$/) {
+        $add_newline = 1;
+    }
+
+    my $line_idx;
+    for ($line_idx=0; $line_idx<scalar(@{ $log_msg }); $line_idx++) {
+        chomp($log_msg->[$line_idx]);
+        print "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] " . $prefix . $log_msg->[$line_idx];
+
+        if (($line_idx < $last_idx) || $add_newline) {
+            print "\n";
+        }
+    }
 }
 
 sub logger {
@@ -550,22 +627,24 @@ sub install_manual {
     my $req = shift;
     logger('info', "installing package via manually provided commands...\n", 2);
 
-    my $install_cmd_log = "";
+    my @install_cmd_log;
     my $command, my $command_output, my $rc;
     foreach my $cmd (@{$req->{'manual_info'}{'commands'}}) {
         logger('info', "executing '$cmd'...\n", 3);
-        ($command, $command_output, $rc) = run_command($cmd);
-        $install_cmd_log .= sprintf($command_logger_fmt, $command, $rc, $command_output);
+        ($command, $command_output, $rc) = run_command2($cmd);
+        push(@install_cmd_log, sprintf($command_logger_fmt_begin, $command, $rc));
+        push(@install_cmd_log, @$command_output);
+        push(@install_cmd_log, sprintf($command_logger_fmt_end));
         if ($rc != 0){
             logger('info', "failed [rc=$rc]\n", 4);
-            logger('error', $install_cmd_log);
+            logger2('error', \@install_cmd_log);
             logger('error', "Failed to run command '$cmd'\n");
             #quit_files_coro($files_requirements_present, $files_channel);
             exit(get_exit_code('command_run_failed'));
         }
     }
     logger('info', "succeeded\n", 2);
-    logger('verbose', $install_cmd_log);
+    logger2('verbose', \@install_cmd_log);
 }
 
 sub install_cpan {
