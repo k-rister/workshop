@@ -367,20 +367,56 @@ sub logger2 {
         return;
     }
 
-    my $add_newline = 0;
     my $last_idx = scalar(@{ $log_msg }) - 1;
-    if ($log_msg->[$last_idx] =~ /\n$/) {
-        $add_newline = 1;
+
+    my $karl = 1;
+    if (! open(FD, ">", "karl.log")) {
+        print STDOUT "FAILED TO OPEN karl.log\n";
+        $karl = 0;
+    } else {
+        print STDOUT "LOG START:\n";
+        print FD "LOG START:\n";
     }
 
+    my $max_attempts = 6;
     my $line_idx;
     for ($line_idx=0; $line_idx<scalar(@{ $log_msg }); $line_idx++) {
-        chomp($log_msg->[$line_idx]);
-        print "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] " . $prefix . $log_msg->[$line_idx];
+        my $attempts = 1;
+        my $ret = 0;
+        while ((! $ret) && ($attempts <= $max_attempts)) {
+            $ret = 0;
+            $ret = print STDOUT "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] [" . $attempts . "/" . $max_attempts . "] " . $prefix . $log_msg->[$line_idx];
 
-        if (($line_idx < $last_idx) || $add_newline) {
-            print "\n";
+            if (! $ret) {
+                if ($attempts > ($max_attempts / 2)) {
+                    sleep 1;
+                }
+
+                if ($karl) {
+                    print FD "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] [" . $attempts . "/" . $max_attempts . "] perl reopening STDOUT\n";
+                }
+                open(STDOUT, ">&1");
+            }
+
+            $attempts++;
         }
+        if ($karl) {
+            if (! $ret) {
+                print FD "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] perl print error\n";
+            } else {
+                $attempts--;
+                if ($attempts > 1) {
+                    print FD "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] perl printed after " . $attempts . " attempts\n";
+                }
+            }
+            print FD "[" . ($line_idx + 1) . "/" . ($last_idx + 1) . "] " . $prefix . $log_msg->[$line_idx];
+        }
+    }
+
+    print STDOUT "LOG END:\n";
+    if ($karl) {
+        print FD "LOG END:\n";
+        close FD;
     }
 }
 
@@ -623,6 +659,14 @@ sub delete_proto {
     return $image;
 }
 
+sub str_to_array {
+    my $str = shift;
+
+    my @array = split(/\n/, $str);
+
+    return map { $_ .= "\n" } @array;
+}
+
 sub install_manual {
     my $req = shift;
     logger('info', "installing package via manually provided commands...\n", 2);
@@ -632,9 +676,9 @@ sub install_manual {
     foreach my $cmd (@{$req->{'manual_info'}{'commands'}}) {
         logger('info', "executing '$cmd'...\n", 3);
         ($command, $command_output, $rc) = run_command2($cmd);
-        push(@install_cmd_log, sprintf($command_logger_fmt_begin, $command, $rc));
+        push(@install_cmd_log, str_to_array(sprintf($command_logger_fmt_begin, $command, $rc)));
         push(@install_cmd_log, @$command_output);
-        push(@install_cmd_log, sprintf($command_logger_fmt_end));
+        push(@install_cmd_log, str_to_array(sprintf($command_logger_fmt_end)));
         if ($rc != 0){
             logger('info', "failed [rc=$rc]\n", 4);
             logger2('error', \@install_cmd_log);
